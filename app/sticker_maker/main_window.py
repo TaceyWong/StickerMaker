@@ -74,6 +74,15 @@ class StickerMakerWindow(FluentWindow):
                 border-radius: 12px;
                 font-size: 12px;
             }
+            QFrame#dropCard[dragOver="true"] {
+                border: 1px solid #2f6fed;
+                background: #f4f8ff;
+            }
+            QLabel#dropTip[dragOver="true"] {
+                border: 1px dashed #2f6fed;
+                color: #2f6fed;
+                background: #eef4ff;
+            }
             QListWidget#fileList, QTextEdit {
                 background: #f8f9fc;
                 border: 1px solid #d8dfec;

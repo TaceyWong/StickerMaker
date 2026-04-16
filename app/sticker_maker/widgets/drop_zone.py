@@ -2,8 +2,8 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDropEvent
-from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QPushButton, QVBoxLayout
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QMouseEvent
+from PySide6.QtWidgets import QFileDialog, QFrame, QLabel, QListWidget, QPushButton, QVBoxLayout
 
 
 class FileDropArea(QFrame):
@@ -30,41 +30,36 @@ class FileDropArea(QFrame):
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
 
-        hint = QLabel(hint_text, self)
-        hint.setObjectName("sectionDescription")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
-        button_row = QHBoxLayout()
-        button_row.setSpacing(8)
-
-        self.add_button = QPushButton("添加文件", self)
-        self.add_button.clicked.connect(self.choose_files)
-        button_row.addWidget(self.add_button)
+        self.hint = QLabel(hint_text, self)
+        self.hint.setObjectName("sectionDescription")
+        self.hint.setWordWrap(True)
+        self.hint.setAcceptDrops(False)
+        layout.addWidget(self.hint)
 
         self.clear_button = QPushButton("清空", self)
         self.clear_button.clicked.connect(self.clear_files)
-        button_row.addWidget(self.clear_button)
-
-        button_row.addStretch(1)
-        layout.addLayout(button_row)
+        layout.addWidget(self.clear_button, 0, Qt.AlignRight)
 
         self.tip_label = QLabel(self._build_drop_tip(), self)
         self.tip_label.setObjectName("dropTip")
         self.tip_label.setAlignment(Qt.AlignCenter)
         self.tip_label.setMinimumHeight(88)
+        self.tip_label.setCursor(Qt.PointingHandCursor)
+        self.tip_label.setAcceptDrops(False)
         layout.addWidget(self.tip_label)
 
         self.file_list = QListWidget(self)
         self.file_list.setObjectName("fileList")
         self.file_list.setMinimumHeight(150)
+        self.file_list.setAcceptDrops(False)
+        self.file_list.viewport().setAcceptDrops(False)
         layout.addWidget(self.file_list)
 
         self._refresh_list()
 
     def _build_drop_tip(self) -> str:
         suffix_text = "、".join(sorted(self.accepted_suffixes))
-        return f"将文件拖到这里，或点击上方按钮选择\n支持类型：{suffix_text}"
+        return f"拖入文件到此处，或点击此区域选择\n支持类型：{suffix_text}"
 
     def _is_supported(self, file_path: str) -> bool:
         return Path(file_path).suffix.lower() in self.accepted_suffixes
@@ -85,6 +80,20 @@ class FileDropArea(QFrame):
         self._refresh_list()
         self.filesChanged.emit(self.paths.copy())
 
+    def _extract_supported_local_paths(self, event: QDropEvent | QDragEnterEvent | QDragMoveEvent) -> list[str]:
+        if not event.mimeData().hasUrls():
+            return []
+        local_paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        return [path for path in local_paths if self._is_supported(path)]
+
+    def _set_drag_state(self, active: bool) -> None:
+        self.setProperty("dragOver", active)
+        self.tip_label.setProperty("dragOver", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.tip_label.style().unpolish(self.tip_label)
+        self.tip_label.style().polish(self.tip_label)
+
     def choose_files(self) -> None:
         patterns = " ".join(f"*{suffix}" for suffix in sorted(self.accepted_suffixes))
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -102,12 +111,35 @@ class FileDropArea(QFrame):
         self.filesChanged.emit([])
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
-        if event.mimeData().hasUrls():
+        if self._extract_supported_local_paths(event):
+            self._set_drag_state(True)
             event.acceptProposedAction()
             return
         event.ignore()
 
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802
+        if self._extract_supported_local_paths(event):
+            self._set_drag_state(True)
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:  # noqa: N802
+        self._set_drag_state(False)
+        event.accept()
+
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
-        paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        self._set_drag_state(False)
+        paths = self._extract_supported_local_paths(event)
         self._append_files(paths)
-        event.acceptProposedAction()
+        if paths:
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self.tip_label.geometry().contains(event.pos()):
+            self.choose_files()
+            event.accept()
+            return
+        super().mousePressEvent(event)

@@ -197,8 +197,8 @@ VIDEO_MODE = ModeConfig(
         OptionSpec(
             key="grid_layout",
             label="宫格布局",
-            description="与视频画面中的格子划分一致。",
-            kind="choice",
+            description="勾选一个与视频画面一致的布局。",
+            kind="grid_checkbox",
             default="3x3",
             choices=GRID_CHOICES,
         ),

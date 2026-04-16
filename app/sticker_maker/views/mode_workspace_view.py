@@ -8,7 +8,7 @@ from qfluentwidgets import MessageBox
 
 from sticker_maker.data.modes import ModeConfig
 from sticker_maker.services.processing import ProcessingResult
-from sticker_maker.widgets.common import HeroCard, ScrollPage, SectionCard
+from sticker_maker.widgets.common import ScrollPage, SectionCard
 from sticker_maker.widgets.drop_zone import FileDropArea
 from sticker_maker.widgets.option_panel import OptionPanel
 from sticker_maker.workers.processing_worker import ProcessingWorker
@@ -21,13 +21,10 @@ class ModeWorkspaceView(ScrollPage):
         self.worker: ProcessingWorker | None = None
         self.last_result: ProcessingResult | None = None
 
-        hero = HeroCard(
-            config.title,
-            config.description,
-            config.shared_capabilities,
-            self.container,
-        )
-        self.content_layout.addWidget(hero)
+        header = QLabel(f"{config.title.upper()}  ·  {config.subtitle.lower()}", self.container)
+        header.setObjectName("sectionTitle")
+        header.setWordWrap(False)
+        self.content_layout.addWidget(header)
 
         columns = QHBoxLayout()
         columns.setSpacing(18)
