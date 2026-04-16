@@ -130,27 +130,27 @@ def process_static_images(
     emit: LogCallback,
 ) -> None:
     rows, cols = parse_grid_layout(str(options.get("grid_layout", "3x3")))
-    output_dir = job_dir / "png"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     rembg_session = _create_rembg_session_if_enabled(options)
     if rembg_session is not None:
         emit(f"去背景模型：{_resolve_rembg_model_name(options)}")
 
-    counter = 1
-    for source_path in source_paths:
+    sources_root = job_dir / "sources"
+    sources_root.mkdir(parents=True, exist_ok=True)
+    for source_index, source_path in enumerate(source_paths, start=1):
         emit(f"读取素材：{source_path}")
-        image = load_image(Path(source_path))
-        if rembg_session is not None:
-            emit(f"去除背景：{source_path}")
-            image = _remove_background_with_rembg(image, rembg_session)
-        emit(f"切分宫格：{source_path}")
-        for cell in split_grid(image, rows, cols):
-            normalized = normalize_cell(cell)
-            output_path = output_dir / f"{counter:04d}.png"
-            save_png(normalized, output_path)
-            result.generated_files.append(output_path)
-            counter += 1
+        source = Path(source_path)
+        source_dir = _build_source_dir(sources_root, source_index, source)
+        generated_cells = process_single_source_images(
+            source_path=source,
+            source_dir=source_dir,
+            rows=rows,
+            cols=cols,
+            remove_watermark=bool(options.get("remove_watermark")),
+            rembg_session=rembg_session,
+            result=result,
+            emit=emit,
+        )
+        emit(f"完成素材：{source.name}，切出 {len(generated_cells)} 张。")
 
 
 def process_dynamic_images(
@@ -160,13 +160,85 @@ def process_dynamic_images(
     result: ProcessingResult,
     emit: LogCallback,
 ) -> None:
-    process_static_images(source_paths, options, job_dir, result, emit)
-
-    frame_dir = job_dir / "png"
-    gif_path = job_dir / "output.gif"
+    rows, cols = parse_grid_layout(str(options.get("grid_layout", "3x3")))
     interval = parse_positive_int(options.get("gif_interval"), default=120)
-    build_gif_from_sequence(frame_dir, gif_path, interval, emit)
-    result.generated_files.append(gif_path)
+    rembg_session = _create_rembg_session_if_enabled(options)
+    if rembg_session is not None:
+        emit(f"去背景模型：{_resolve_rembg_model_name(options)}")
+
+    sources_root = job_dir / "sources"
+    sources_root.mkdir(parents=True, exist_ok=True)
+    for source_index, source_path in enumerate(source_paths, start=1):
+        source = Path(source_path)
+        source_dir = _build_source_dir(sources_root, source_index, source)
+        generated_cells = process_single_source_images(
+            source_path=source,
+            source_dir=source_dir,
+            rows=rows,
+            cols=cols,
+            remove_watermark=bool(options.get("remove_watermark")),
+            rembg_session=rembg_session,
+            result=result,
+            emit=emit,
+        )
+        if not generated_cells:
+            continue
+        gif_path = source_dir / "output.gif"
+        build_gif_from_sequence(source_dir / "cells", gif_path, interval, emit)
+        result.generated_files.append(gif_path)
+        emit(f"完成动态素材：{source.name} -> {gif_path.name}")
+
+
+def _build_source_dir(sources_root: Path, source_index: int, source: Path) -> Path:
+    safe_name = re.sub(r"[^0-9A-Za-z_\u4e00-\u9fa5-]+", "_", source.stem).strip("_")
+    if not safe_name:
+        safe_name = f"source_{source_index:02d}"
+    source_dir = sources_root / f"{source_index:02d}_{safe_name}"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    return source_dir
+
+
+def process_single_source_images(
+    source_path: Path,
+    source_dir: Path,
+    rows: int,
+    cols: int,
+    remove_watermark: bool,
+    rembg_session: object | None,
+    result: ProcessingResult,
+    emit: LogCallback,
+) -> list[Path]:
+    image = load_image(source_path)
+    original_path = source_dir / "original.png"
+    save_png(image, original_path)
+    result.generated_files.append(original_path)
+
+    if remove_watermark:
+        # 当前去水印能力尚未接入，先保留占位结果，保证全链路可追踪。
+        watermark_path = source_dir / "watermark_removed.png"
+        save_png(image, watermark_path)
+        result.generated_files.append(watermark_path)
+
+    if rembg_session is not None:
+        emit(f"去除背景：{source_path}")
+        image = _remove_background_with_rembg(image, rembg_session)
+        bg_removed_path = source_dir / "background_removed.png"
+        save_png(image, bg_removed_path)
+        result.generated_files.append(bg_removed_path)
+
+    emit(f"切分宫格：{source_path}")
+    cells_dir = source_dir / "cells"
+    cells_dir.mkdir(parents=True, exist_ok=True)
+    generated_cells: list[Path] = []
+    counter = 1
+    for cell in split_grid(image, rows, cols):
+        normalized = normalize_cell(cell)
+        output_path = cells_dir / f"{counter:04d}.png"
+        save_png(normalized, output_path)
+        result.generated_files.append(output_path)
+        generated_cells.append(output_path)
+        counter += 1
+    return generated_cells
 
 
 def process_video_sources(
@@ -443,7 +515,6 @@ def build_gif_from_sequence(
             duration=interval_ms,
             loop=0,
             disposal=2,
-            transparency=0,
             optimize=False,
         )
     except OSError as error:
