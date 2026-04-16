@@ -7,6 +7,8 @@ from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QListWid
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 
+from sticker_maker.widgets.ai_generate_dialog import AIGenerateDialog
+
 
 class FileDropArea(QFrame):
     filesChanged = Signal(list)
@@ -90,6 +92,14 @@ class FileDropArea(QFrame):
         self.clear_button.clicked.connect(self.clear_files)
         action_row.addWidget(self.clear_button)
 
+        # 右侧补充：AI 生成素材并自动加入列表
+        self.ai_button = QPushButton("AI生成", self)
+        self.ai_button.clicked.connect(self.open_ai_generate_dialog)
+        # 仅当当前模式接受图片后缀时启用；视频模式仅接受 MP4/MOV…，避免误导。
+        supported_img_suffixes = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+        self.ai_button.setEnabled(bool(self.accepted_suffixes & supported_img_suffixes))
+        action_row.addWidget(self.ai_button)
+
         self.add_button = QPushButton("添加", self)
         self.add_button.clicked.connect(self.choose_files)
         action_row.addWidget(self.add_button)
@@ -130,6 +140,17 @@ class FileDropArea(QFrame):
         self._refresh_list()
         self.filesChanged.emit(self.paths.copy())
 
+    def add_generated_files(self, file_paths: list[str]) -> None:
+        """
+        AI 生成后写入本地临时目录并加入素材列表。
+        用公共方法而不是访问私有 `_append_files`，减少耦合。
+        """
+        before_len = len(self.paths)
+        self._append_files(file_paths)
+        after_len = len(self.paths)
+        if after_len > before_len:
+            self.file_list.setCurrentRow(before_len)
+
     def _extract_supported_local_paths(self, event: QDropEvent | QDragEnterEvent | QDragMoveEvent) -> list[str]:
         if not event.mimeData().hasUrls():
             return []
@@ -151,6 +172,13 @@ class FileDropArea(QFrame):
         )
         if file_paths:
             self._append_files(file_paths)
+
+    def open_ai_generate_dialog(self) -> None:
+        def on_generated(paths: list[str]) -> None:
+            self.add_generated_files(paths)
+
+        dialog = AIGenerateDialog(on_generated=on_generated, parent=self)
+        dialog.exec()
 
     def clear_files(self) -> None:
         self.paths.clear()
