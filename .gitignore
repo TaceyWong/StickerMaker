@@ -1,0 +1,60 @@
+# ===== Project specific =====
+# rembg 模型体积较大，若放在 resource/models 请勿提交
+app/resource/models/*.onnx
+
+# 本地虚拟环境
+.conda/
+.venv/
+venv/
+env/
+ENV/
+
+# ===== Python runtime/cache artifacts =====
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C 扩展
+*.so
+*.pyd
+*.dll
+
+# 测试/覆盖率
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# 类型检查/静态分析缓存
+.mypy_cache/
+.pyre/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# 构建/打包产物
+build/
+dist/
+site/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.egg
+
+# 日志与运行时临时文件
+*.log
+*.pid
+*.seed
+*.out
+*.err
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ===== Env files =====
+.env
+.env.*
+!.env.example

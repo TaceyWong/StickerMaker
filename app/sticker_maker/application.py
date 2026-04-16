@@ -9,7 +9,7 @@ from sticker_maker.main_window import StickerMakerWindow
 def main() -> int:
     """Start the desktop application."""
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("StickerMaker")
+    app.setApplicationName("StickerMaker · 表情包制作")
 
     window = StickerMakerWindow()
     window.show()

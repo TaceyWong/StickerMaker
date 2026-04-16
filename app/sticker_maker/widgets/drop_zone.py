@@ -26,7 +26,7 @@ class FileDropArea(QFrame):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
-        title = QLabel("素材导入", self)
+        title = QLabel("素材", self)
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
 
@@ -38,11 +38,11 @@ class FileDropArea(QFrame):
         button_row = QHBoxLayout()
         button_row.setSpacing(8)
 
-        self.add_button = QPushButton("选择文件", self)
+        self.add_button = QPushButton("添加文件", self)
         self.add_button.clicked.connect(self.choose_files)
         button_row.addWidget(self.add_button)
 
-        self.clear_button = QPushButton("清空列表", self)
+        self.clear_button = QPushButton("清空", self)
         self.clear_button.clicked.connect(self.clear_files)
         button_row.addWidget(self.clear_button)
 
@@ -74,7 +74,7 @@ class FileDropArea(QFrame):
         if self.paths:
             self.file_list.addItems(self.paths)
             return
-        self.file_list.addItem("暂无已选择文件")
+        self.file_list.addItem("暂无文件")
 
     def _append_files(self, file_paths: list[str]) -> None:
         new_files = [path for path in file_paths if self._is_supported(path)]

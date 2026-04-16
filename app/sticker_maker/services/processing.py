@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import math
+import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -9,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from PIL import Image
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QRect, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 
@@ -36,9 +39,23 @@ GRID_LAYOUTS = {
 }
 
 REMBG_MODEL_IDS = frozenset(
-    {"isnet-anime", "birefnet-portrait", "u2net_human_seg", "isnet-general-use"}
+    {
+        "isnet-anime",
+        "bria-rmbg",
+        "birefnet-portrait",
+        "u2net_human_seg",
+        "isnet-general-use",
+    }
 )
 REMBG_DEFAULT_MODEL = "isnet-anime"
+
+
+def configure_rembg_models_dir(base_dir: Path) -> Path:
+    """将 rembg 的 U2NET_HOME 指向项目内 resource/models（与 README 中「模型放项目内」一致）。"""
+    models_dir = (base_dir / "resource" / "models").resolve()
+    models_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["U2NET_HOME"] = str(models_dir)
+    return models_dir
 
 
 def process_sticker_job(
@@ -61,6 +78,8 @@ def process_sticker_job(
             logger(message)
 
     emit(f"输出目录：{job_dir}")
+    models_dir = configure_rembg_models_dir(base_dir)
+    emit(f"rembg 模型目录：{models_dir}")
     append_feature_warnings(options, result, emit)
 
     if mode_key == "static":
@@ -120,11 +139,12 @@ def process_static_images(
 
     counter = 1
     for source_path in source_paths:
-        emit(f"切分图片：{source_path}")
+        emit(f"读取素材：{source_path}")
         image = load_image(Path(source_path))
         if rembg_session is not None:
             emit(f"去除背景：{source_path}")
             image = _remove_background_with_rembg(image, rembg_session)
+        emit(f"切分宫格：{source_path}")
         for cell in split_grid(image, rows, cols):
             normalized = normalize_cell(cell)
             output_path = output_dir / f"{counter:04d}.png"
@@ -203,7 +223,7 @@ def process_video_sources(
             result.generated_files.append(output_path)
 
     emit("开始按格位合成 GIF。")
-    for cell_dir in sorted(path for path in cell_root.iterdir() if path.is_dir()):
+    for cell_dir in _sort_cell_position_dirs(cell_root):
         gif_path = gif_root / f"{cell_dir.name}.gif"
         build_gif_from_sequence(cell_dir, gif_path, interval, emit)
         result.generated_files.append(gif_path)
@@ -360,60 +380,77 @@ def save_png(image: QImage, target_path: Path) -> None:
         raise ProcessingError(f"保存 PNG 失败：{target_path}")
 
 
+def _scan_numbered_png_frames(frame_dir: Path) -> list[Path]:
+    """只认 0001.png 形式的帧，排除 palette.png 等杂文件。"""
+    frames: list[Path] = []
+    for path in frame_dir.iterdir():
+        if path.suffix.lower() != ".png":
+            continue
+        stem = path.stem
+        if len(stem) == 4 and stem.isdigit():
+            frames.append(path)
+    frames.sort(key=lambda p: p.stem)
+    return frames
+
+
+def _sort_cell_position_dirs(cell_root: Path) -> list[Path]:
+    """按行、列数值排序（避免 r1_c10 排在 r1_c2 前的字典序问题）。"""
+
+    def row_col_key(path: Path) -> tuple[int, int, str]:
+        match = re.fullmatch(r"r(\d+)_c(\d+)", path.name)
+        if match:
+            return int(match.group(1)), int(match.group(2)), path.name
+        return (9999, 9999, path.name)
+
+    return sorted((p for p in cell_root.iterdir() if p.is_dir()), key=row_col_key)
+
+
 def build_gif_from_sequence(
     frame_dir: Path,
     gif_path: Path,
     interval_ms: int,
     emit: LogCallback,
 ) -> None:
-    frame_files = sorted(frame_dir.glob("*.png"))
-    if not frame_files:
-        raise ProcessingError(f"目录中没有可用于合成 GIF 的 PNG：{frame_dir}")
+    frames = _scan_numbered_png_frames(frame_dir)
+    if not frames:
+        raise ProcessingError(
+            f"目录中没有可用于合成 GIF 的编号 PNG（需为 0001.png、0002.png…）：{frame_dir}"
+        )
 
-    fps = max(1.0, 1000.0 / interval_ms)
-    palette_path = frame_dir / "palette.png"
-    sequence_pattern = str(frame_dir / "%04d.png")
+    gif_out = gif_path.resolve()
+    gif_out.parent.mkdir(parents=True, exist_ok=True)
+    emit(f"合成 GIF：{gif_out.name}（{len(frames)} 帧，{interval_ms} ms/帧）")
 
-    emit(f"合成 GIF：{gif_path.name}")
-    run_ffmpeg(
-        [
-            "ffmpeg",
-            "-y",
-            "-framerate",
-            f"{fps:.4f}",
-            "-start_number",
-            "1",
-            "-i",
-            sequence_pattern,
-            "-vf",
-            "palettegen=reserve_transparent=on",
-            str(palette_path),
-        ],
-        cwd=frame_dir,
-    )
-    run_ffmpeg(
-        [
-            "ffmpeg",
-            "-y",
-            "-framerate",
-            f"{fps:.4f}",
-            "-start_number",
-            "1",
-            "-i",
-            sequence_pattern,
-            "-i",
-            str(palette_path),
-            "-lavfi",
-            "paletteuse=alpha_threshold=128",
-            "-loop",
-            "0",
-            str(gif_path),
-        ],
-        cwd=frame_dir,
-    )
+    pil_frames: list[Image.Image] = []
+    try:
+        for path in frames:
+            frame = Image.open(path).convert("RGBA")
+            # 统一每帧为 240x240，避免 GIF 尺寸漂移
+            if frame.size != (240, 240):
+                frame.thumbnail((240, 240), Image.Resampling.LANCZOS)
+                canvas = Image.new("RGBA", (240, 240), (0, 0, 0, 0))
+                offset = ((240 - frame.width) // 2, (240 - frame.height) // 2)
+                canvas.paste(frame, offset, frame)
+                frame = canvas
+            pil_frames.append(frame)
 
-    if palette_path.exists():
-        palette_path.unlink()
+        first, rest = pil_frames[0], pil_frames[1:]
+        first.save(
+            gif_out,
+            format="GIF",
+            save_all=True,
+            append_images=rest,
+            duration=interval_ms,
+            loop=0,
+            disposal=2,
+            transparency=0,
+            optimize=False,
+        )
+    except OSError as error:
+        raise ProcessingError(f"GIF 合成失败：{error}") from error
+    finally:
+        for frame in pil_frames:
+            frame.close()
 
 
 def extract_video_frames(

@@ -1,5 +1,5 @@
 # coding: utf-8
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QFrame, QLabel, QLineEdit, QVBoxLayout, QWidget
 
 from sticker_maker.data.modes import OptionSpec
@@ -18,12 +18,13 @@ class OptionPanel(QFrame):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
 
-        title = QLabel("参数配置", self)
+        title = QLabel("参数", self)
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
 
         form_layout = QFormLayout()
         form_layout.setSpacing(12)
+        form_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignTop)
         layout.addLayout(form_layout)
 
         for spec in self.option_specs:
@@ -56,7 +57,7 @@ class OptionPanel(QFrame):
             return editor
 
         if spec.kind == "boolean":
-            editor = QCheckBox("启用", self)
+            editor = QCheckBox(self)
             editor.setChecked(bool(spec.default))
             editor.stateChanged.connect(self._emit_options_changed)
             return editor

@@ -9,34 +9,34 @@ class SettingsView(ScrollPage):
     def __init__(self, parent=None):
         super().__init__("settings", parent)
 
-        guidance = SectionCard(
-            "项目约定",
-            "这里集中展示当前模板的实现边界和后续扩展方向，方便继续开发时保持结构一致。",
+        about = SectionCard(
+            "关于",
+            "功能与流程说明见项目根目录下的 README。",
             self.container,
         )
         for line in (
-            "代码按入口、主窗口、视图、组件、服务、静态数据拆分。",
-            "三种模式共用同一套工作区页面，通过配置数据描述差异。",
-            "文件读写统一使用 UTF-8，不写入 BOM。",
-            "真实处理能力建议从 services 层继续向下拆到 image/video 子模块。",
+            "三种模式对应 README 中的模式一～三：成套静态、单张动态 GIF、视频成套动态。",
+            "去水印能力尚在开发；勾选相关选项时会在日志中提示。",
+            "去背景使用 rembg；权重文件放在 app/resource/models（处理任务开始时会设置 U2NET_HOME，缺失时首次需联网下载）。",
+            "视频模式依赖本机已安装 ffmpeg，且可在命令行中直接调用。",
         ):
-            label = QLabel(f"• {line}", guidance)
+            label = QLabel(line, about)
             label.setObjectName("sectionDescription")
             label.setWordWrap(True)
-            guidance.body_layout.addWidget(label)
+            about.body_layout.addWidget(label)
 
-        self.content_layout.addWidget(guidance)
+        self.content_layout.addWidget(about)
 
-        stack = SectionCard(
-            "技术栈映射",
-            "README 中的关键依赖已经整理到这里，便于逐项接入。",
+        deps = SectionCard(
+            "依赖与技术",
+            "与 README「技术栈」一致，便于排查环境。",
             self.container,
         )
         for item in TECH_STACK:
-            label = QLabel(f"• {item}", stack)
+            label = QLabel(f"· {item}", deps)
             label.setObjectName("sectionDescription")
             label.setWordWrap(True)
-            stack.body_layout.addWidget(label)
+            deps.body_layout.addWidget(label)
 
-        self.content_layout.addWidget(stack)
+        self.content_layout.addWidget(deps)
         self.content_layout.addStretch(1)

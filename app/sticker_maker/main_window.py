@@ -23,15 +23,15 @@ class StickerMakerWindow(FluentWindow):
         self._apply_style()
 
     def _init_navigation(self) -> None:
-        self.addSubInterface(self.static_view, FIF.ALBUM, "成套静态")
-        self.addSubInterface(self.dynamic_view, FIF.VIDEO, "单个动态")
-        self.addSubInterface(self.video_view, FIF.FOLDER, "视频成套动态")
-        self.addSubInterface(self.settings_view, FIF.SETTING, "设置", NavigationItemPosition.BOTTOM)
+        self.addSubInterface(self.static_view, FIF.ALBUM, "静态套图")
+        self.addSubInterface(self.dynamic_view, FIF.VIDEO, "动态 GIF")
+        self.addSubInterface(self.video_view, FIF.FOLDER, "视频套图")
+        self.addSubInterface(self.settings_view, FIF.SETTING, "关于与依赖", NavigationItemPosition.BOTTOM)
 
     def _init_window(self) -> None:
         self.resize(1280, 860)
         self.setMinimumWidth(1080)
-        self.setWindowTitle("StickerMaker")
+        self.setWindowTitle("StickerMaker · 表情包制作")
         self.setWindowIcon(QIcon("resource/shoko.png"))
 
         desktop = QApplication.screens()[0].availableGeometry()
@@ -46,10 +46,17 @@ class StickerMakerWindow(FluentWindow):
             QWidget#pageContainer {
                 background: #f4f6fa;
             }
-            QFrame#sectionCard, QFrame#dropCard, QFrame#workflowStep {
+            QFrame#sectionCard, QFrame#dropCard, QFrame#heroCard {
                 background: #ffffff;
                 border: 1px solid #e1e6ef;
                 border-radius: 14px;
+            }
+            QLabel#tagChip {
+                color: #3d5a80;
+                background: #eef2f8;
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 12px;
             }
             QLabel#sectionTitle {
                 color: #10243d;
