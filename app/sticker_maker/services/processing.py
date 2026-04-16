@@ -34,6 +34,8 @@ class ProcessingResult:
 
 
 GRID_LAYOUTS = {
+    "1x1": (1, 1),
+    "2x2": (2, 2),
     "3x3": (3, 3),
     "3x4": (3, 4),
     "4x3": (4, 3),
@@ -48,7 +50,7 @@ REMBG_MODEL_IDS = frozenset(
         "isnet-general-use",
     }
 )
-REMBG_DEFAULT_MODEL = "isnet-anime"
+REMBG_DEFAULT_MODEL = "bria-rmbg"
 
 
 def configure_rembg_models_dir(base_dir: Path) -> Path:
@@ -137,7 +139,9 @@ def process_static_images(
 
     sources_root = job_dir / "sources"
     sources_root.mkdir(parents=True, exist_ok=True)
+    total_sources = len(source_paths)
     for source_index, source_path in enumerate(source_paths, start=1):
+        emit(f"[{source_index}/{total_sources}] 开始处理素材")
         emit(f"读取素材：{source_path}")
         source = Path(source_path)
         source_dir = _build_source_dir(sources_root, source_index, source)
@@ -151,7 +155,7 @@ def process_static_images(
             result=result,
             emit=emit,
         )
-        emit(f"完成素材：{source.name}，切出 {len(generated_cells)} 张。")
+        emit(f"[{source_index}/{total_sources}] 完成素材：{source.name}，切出 {len(generated_cells)} 张。")
 
 
 def process_dynamic_images(
@@ -169,7 +173,9 @@ def process_dynamic_images(
 
     sources_root = job_dir / "sources"
     sources_root.mkdir(parents=True, exist_ok=True)
+    total_sources = len(source_paths)
     for source_index, source_path in enumerate(source_paths, start=1):
+        emit(f"[{source_index}/{total_sources}] 开始处理动态素材")
         source = Path(source_path)
         source_dir = _build_source_dir(sources_root, source_index, source)
         generated_cells = process_single_source_images(
@@ -187,7 +193,7 @@ def process_dynamic_images(
         gif_path = source_dir / "output.gif"
         build_gif_from_sequence(source_dir / "cells", gif_path, interval, emit)
         result.generated_files.append(gif_path)
-        emit(f"完成动态素材：{source.name} -> {gif_path.name}")
+        emit(f"[{source_index}/{total_sources}] 完成动态素材：{source.name} -> {gif_path.name}")
 
 
 def _build_source_dir(sources_root: Path, source_index: int, source: Path) -> Path:
@@ -233,12 +239,16 @@ def process_single_source_images(
     cells_dir.mkdir(parents=True, exist_ok=True)
     generated_cells: list[Path] = []
     counter = 1
-    for cell in split_grid(image, rows, cols):
+    cells = split_grid(image, rows, cols)
+    total_cells = len(cells)
+    for cell_index, cell in enumerate(cells, start=1):
         normalized = normalize_cell(cell)
         output_path = cells_dir / f"{counter:04d}.png"
         save_png(normalized, output_path)
         result.generated_files.append(output_path)
         generated_cells.append(output_path)
+        if total_cells <= 12 or cell_index in {1, total_cells} or cell_index % 5 == 0:
+            emit(f"切图进度：{cell_index}/{total_cells}")
         counter += 1
     return generated_cells
 
@@ -272,7 +282,7 @@ def process_video_sources(
     if not frame_paths:
         raise ProcessingError("没有从视频中提取到可用帧，请检查输入视频或抽帧策略。")
 
-    emit(f"已提取 {len(frame_paths)} 帧，开始按宫格切分。")
+    emit(f"已提取 {len(frame_paths)} 帧。")
     original_dir = source_dir / "original_frames"
     original_dir.mkdir(parents=True, exist_ok=True)
     watermark_dir = source_dir / "watermark_removed_frames"
@@ -291,8 +301,12 @@ def process_video_sources(
             f"去背景模型：{_resolve_rembg_model_name(options)}"
             "（逐帧处理，CPU 模式下可能较慢）。"
         )
+    emit("开始逐帧处理：先去背景，再按宫格切分。")
 
+    total_frames = len(frame_paths)
     for frame_index, frame_path in enumerate(frame_paths, start=1):
+        if frame_index == 1 or frame_index == total_frames or frame_index % 5 == 0:
+            emit(f"帧进度：{frame_index}/{total_frames}")
         image = load_image(frame_path)
         original_path = original_dir / f"{frame_index:04d}.png"
         save_png(image, original_path)
@@ -321,8 +335,11 @@ def process_video_sources(
             result.generated_files.append(output_path)
 
     emit("开始按格位合成 GIF。")
-    for cell_dir in _sort_cell_position_dirs(cell_root):
+    cell_dirs = _sort_cell_position_dirs(cell_root)
+    total_groups = len(cell_dirs)
+    for group_index, cell_dir in enumerate(cell_dirs, start=1):
         gif_path = gif_root / f"{cell_dir.name}.gif"
+        emit(f"GIF 合成进度：{group_index}/{total_groups} ({cell_dir.name})")
         build_gif_from_sequence(cell_dir, gif_path, interval, emit)
         result.generated_files.append(gif_path)
 
@@ -343,7 +360,7 @@ def parse_positive_int(value: object, default: int) -> int:
 
 
 def _resolve_rembg_model_name(options: dict[str, object]) -> str:
-    raw = str(options.get("rembg_model", "") or "").strip()
+    raw = str(os.getenv("STICKERMAKER_RMBG_MODEL", "")).strip()
     if raw in REMBG_MODEL_IDS:
         return raw
     return REMBG_DEFAULT_MODEL

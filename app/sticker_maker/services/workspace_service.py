@@ -14,7 +14,7 @@ def resolve_choice_label(spec: OptionSpec, value: object) -> str:
 def format_option_value(spec: OptionSpec, value: object) -> str:
     if spec.kind == "boolean":
         return "是" if bool(value) else "否"
-    if spec.kind == "choice":
+    if spec.kind in {"choice", "grid_checkbox"}:
         return resolve_choice_label(spec, value)
     text = str(value).strip()
     return text or "—"

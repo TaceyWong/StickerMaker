@@ -8,7 +8,6 @@ from qfluentwidgets import MessageBox
 
 from sticker_maker.data.modes import ModeConfig
 from sticker_maker.services.processing import ProcessingResult
-from sticker_maker.services.workspace_service import build_task_summary
 from sticker_maker.widgets.common import HeroCard, ScrollPage, SectionCard
 from sticker_maker.widgets.drop_zone import FileDropArea
 from sticker_maker.widgets.option_panel import OptionPanel
@@ -38,11 +37,9 @@ class ModeWorkspaceView(ScrollPage):
 
         accepted_suffixes = self._parse_suffixes(config.accepted_inputs)
         self.drop_area = FileDropArea(accepted_suffixes, config.drop_hint, self.container)
-        self.drop_area.filesChanged.connect(self._refresh_summary)
         left_column.addWidget(self.drop_area)
 
         self.option_panel = OptionPanel(config.option_specs, self.container)
-        self.option_panel.optionsChanged.connect(self._refresh_summary)
         left_column.addWidget(self.option_panel)
 
         right_column = QVBoxLayout()
@@ -74,25 +71,11 @@ class ModeWorkspaceView(ScrollPage):
         run_card.body_layout.addWidget(self.status_label)
         right_column.addWidget(run_card)
 
-        output_card = SectionCard(
-            "摘要与日志",
-            "左侧为根据当前参数生成的任务摘要；处理开始后，下方追加运行日志。",
-            self.container,
-        )
-        self.summary_text = QTextEdit(output_card)
-        self.summary_text.setReadOnly(True)
-        self.summary_text.setMinimumHeight(160)
-        self.summary_text.setPlaceholderText("任务摘要…")
-        output_card.body_layout.addWidget(self.summary_text)
-
-        log_caption = QLabel("运行日志", output_card)
-        log_caption.setObjectName("sectionDescription")
-        output_card.body_layout.addWidget(log_caption)
-
+        output_card = SectionCard("运行日志", "处理过程中的输出将显示在这里。", self.container)
         self.log_text = QTextEdit(output_card)
         self.log_text.setReadOnly(True)
-        self.log_text.setMinimumHeight(200)
-        self.log_text.setPlaceholderText("处理过程中的输出将显示在这里。")
+        self.log_text.setMinimumHeight(360)
+        self.log_text.setPlaceholderText("运行日志…")
         output_card.body_layout.addWidget(self.log_text)
         right_column.addWidget(output_card)
         right_column.addStretch(1)
@@ -110,8 +93,6 @@ class ModeWorkspaceView(ScrollPage):
         self.content_layout.addWidget(columns_widget)
         self.content_layout.addStretch(1)
 
-        self._refresh_summary()
-
     @staticmethod
     def _parse_suffixes(description: str) -> tuple[str, ...]:
         cleaned = description.replace("、", " ").replace("，", " ").replace("支持", "")
@@ -121,16 +102,6 @@ class ModeWorkspaceView(ScrollPage):
             if ext and ext.isalnum():
                 suffixes.append(f".{ext}")
         return tuple(suffixes)
-
-    def _refresh_summary(self, *_args) -> None:
-        summary = build_task_summary(
-            self.config,
-            self.option_panel.values(),
-            self.drop_area.paths,
-        )
-        self.summary_text.setPlainText(summary)
-        if not self.drop_area.paths and self.worker is None:
-            self.status_label.setText("就绪。请先添加素材文件。")
 
     def _start_processing(self) -> None:
         if self.worker is not None:

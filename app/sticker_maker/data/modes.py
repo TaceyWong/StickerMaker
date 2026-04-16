@@ -42,6 +42,8 @@ class ModeConfig:
 
 
 GRID_CHOICES = (
+    OptionChoice("1x1", "1×1"),
+    OptionChoice("2x2", "2×2"),
     OptionChoice("3x3", "3×3 九宫格"),
     OptionChoice("3x4", "3×4 十二宫格"),
     OptionChoice("4x3", "4×3 十二宫格"),
@@ -71,8 +73,8 @@ COMMON_IMAGE_OPTIONS = (
     OptionSpec(
         key="grid_layout",
         label="宫格布局",
-        description="与拼版图上的行列划分一致。",
-        kind="choice",
+        description="勾选一个与拼版图一致的布局。",
+        kind="grid_checkbox",
         default="3x3",
         choices=GRID_CHOICES,
     ),
@@ -86,17 +88,9 @@ COMMON_IMAGE_OPTIONS = (
     OptionSpec(
         key="remove_background",
         label="去除背景（透明）",
-        description="使用 rembg；关闭则仅按非透明区域裁切（适合已是透明底的图）。",
+        description="开=使用默认 BRIA RMBG 2.0；关=跳过去背景。",
         kind="boolean",
         default=True,
-    ),
-    OptionSpec(
-        key="rembg_model",
-        label="去背景模型",
-        description="二次元用「动漫」；高质量通用可试「BRIA RMBG 2.0」；真人用「真人肖像」或「人体分割」。首次使用会下载模型。",
-        kind="choice",
-        default="isnet-anime",
-        choices=REMBG_MODEL_CHOICES,
     ),
 )
 
@@ -229,14 +223,6 @@ VIDEO_MODE = ModeConfig(
             description="对每一视频帧去背景；CPU 下可能较慢。",
             kind="boolean",
             default=True,
-        ),
-        OptionSpec(
-            key="rembg_model",
-            label="去背景模型",
-            description="与图片模式相同；通用高质量可优先试 BRIA RMBG 2.0。",
-            kind="choice",
-            default="isnet-anime",
-            choices=REMBG_MODEL_CHOICES,
         ),
         OptionSpec(
             key="gif_interval",
