@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import ssl
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,8 @@ class OpenAICompatibleImageRequest:
     prompt: str
     size: str = "1024x1024"
     n: int = 1
+    username: str = ""
+    password: str = ""
 
 
 def _json_post(url: str, payload: dict[str, Any], headers: dict[str, str], timeout_s: int) -> dict[str, Any]:
@@ -75,6 +78,9 @@ def generate_openai_compatible_images(
     headers = {"Content-Type": "application/json"}
     if req.api_key.strip():
         headers["Authorization"] = f"Bearer {req.api_key.strip()}"
+    elif req.username.strip():
+        token = base64.b64encode(f"{req.username.strip()}:{req.password}".encode("utf-8")).decode("utf-8")
+        headers["Authorization"] = f"Basic {token}"
 
     payload = {
         "model": req.model,
@@ -115,4 +121,19 @@ def generate_openai_compatible_images(
     if not saved:
         raise RuntimeError(f"响应中未包含可用图片数据（b64_json/url）\n响应：{resp}")
     return saved
+
+
+def generate_local_doubao_images_via_rpa(
+    prompt: str,
+    count: int,
+    output_dir: Path,
+) -> list[Path]:
+    """
+    本地豆包（浏览器 RPA）入口。
+    当前仅触发浏览器并提示用户；后续可接入 Playwright 自动下载落盘。
+    """
+
+    _ = (prompt, count, output_dir)
+    webbrowser.open("https://www.doubao.com/")
+    raise RuntimeError("已打开本地豆包网页。当前版本的浏览器 RPA 自动下载还在接入中，请先使用 OpenAI/千问/Banana。")
 

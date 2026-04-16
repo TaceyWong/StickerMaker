@@ -1,6 +1,7 @@
 # coding: utf-8
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -42,50 +43,44 @@ class AIGenerateDialog(QDialog):
 
         tab_local = QWidget(self)
         tab_openai = QWidget(self)
+        tab_qwen = QWidget(self)
+        tab_banana = QWidget(self)
         self.tabs.addTab(tab_local, "本地豆包模式")
-        self.tabs.addTab(tab_openai, "OpenAI 兼容 API")
+        self.tabs.addTab(tab_openai, "OpenAI兼容API")
+        self.tabs.addTab(tab_qwen, "千问")
+        self.tabs.addTab(tab_banana, "Banana")
 
         # ---------- 本地豆包 ----------
         local_layout = QVBoxLayout(tab_local)
         local_layout.setContentsMargins(12, 12, 12, 12)
-
-        self.local_base_url = QLineEdit(tab_local)
-        self.local_base_url.setText("http://127.0.0.1:8000/v1")
-        self.local_base_url.setPlaceholderText("例如：http://127.0.0.1:8000/v1")
-        local_layout.addWidget(_labeled("Base URL", self.local_base_url))
-
-        self.local_api_key = QLineEdit(tab_local)
-        self.local_api_key.setPlaceholderText("如需鉴权可填写；留空则不带 Bearer")
-        local_layout.addWidget(_labeled("API Key（可选）", self.local_api_key))
-
-        self.local_model = QLineEdit(tab_local)
-        self.local_model.setText("doubao-image")
-        self.local_model.setPlaceholderText("图像模型名")
-        local_layout.addWidget(_labeled("Model", self.local_model))
-
+        local_desc = QLabel("本地豆包走浏览器 RPA，不需要任何配置。", tab_local)
+        local_desc.setWordWrap(True)
+        local_layout.addWidget(local_desc)
         local_layout.addStretch(1)
 
         # ---------- OpenAI 兼容 ----------
         openai_layout = QVBoxLayout(tab_openai)
         openai_layout.setContentsMargins(12, 12, 12, 12)
-
-        self.openai_base_url = QLineEdit(tab_openai)
-        self.openai_base_url.setText("https://api.openai.com/v1")
-        self.openai_base_url.setPlaceholderText("例如：https://api.openai.com/v1")
-        openai_layout.addWidget(_labeled("Base URL", self.openai_base_url))
-
-        # 兼容老版本 PySide6：没有 QPasswordLineEdit 时用 QLineEdit + 密码回显模式实现
-        self.openai_api_key = QLineEdit(tab_openai)
-        self.openai_api_key.setPlaceholderText("OpenAI API Key")
-        self.openai_api_key.setEchoMode(QLineEdit.Password)
-        openai_layout.addWidget(_labeled("API Key", self.openai_api_key))
-
-        self.openai_model = QLineEdit(tab_openai)
-        self.openai_model.setText("gpt-image-1")
-        self.openai_model.setPlaceholderText("图像模型名")
-        openai_layout.addWidget(_labeled("Model", self.openai_model))
-
+        openai_desc = QLabel("配置请在 设置页 -> AI 生成配置 中填写。", tab_openai)
+        openai_desc.setWordWrap(True)
+        openai_layout.addWidget(openai_desc)
         openai_layout.addStretch(1)
+
+        # ---------- 千问 ----------
+        qwen_layout = QVBoxLayout(tab_qwen)
+        qwen_layout.setContentsMargins(12, 12, 12, 12)
+        qwen_desc = QLabel("千问使用“用户名+密码”鉴权，配置请在设置页填写。", tab_qwen)
+        qwen_desc.setWordWrap(True)
+        qwen_layout.addWidget(qwen_desc)
+        qwen_layout.addStretch(1)
+
+        # ---------- Banana ----------
+        banana_layout = QVBoxLayout(tab_banana)
+        banana_layout.setContentsMargins(12, 12, 12, 12)
+        banana_desc = QLabel("Banana 配置请在设置页填写。", tab_banana)
+        banana_desc.setWordWrap(True)
+        banana_layout.addWidget(banana_desc)
+        banana_layout.addStretch(1)
 
         # ---------- Prompt ----------
         prompt_card = QWidget(self)
@@ -186,26 +181,42 @@ class AIGenerateDialog(QDialog):
             dialog.exec()
             return
 
-        if self.tabs.currentIndex() == 0:
-            base_url = self.local_base_url.text().strip()
-            api_key = self.local_api_key.text().strip()
-            model = self.local_model.text().strip()
-        else:
-            base_url = self.openai_base_url.text().strip()
-            api_key = self.openai_api_key.text().strip()
-            model = self.openai_model.text().strip()
+        provider = "local_doubao"
+        base_url = ""
+        api_key = ""
+        model = ""
+        username = ""
+        password = ""
+        tab_idx = self.tabs.currentIndex()
+
+        if tab_idx == 1:
+            provider = "openai"
+            base_url = os.getenv("STICKERMAKER_AI_OPENAI_BASE_URL", "").strip()
+            api_key = os.getenv("STICKERMAKER_AI_OPENAI_API_KEY", "").strip()
+            model = os.getenv("STICKERMAKER_AI_OPENAI_MODEL", "").strip()
             if not api_key:
-                dialog = MessageBox("提示", "OpenAI 模式下 API Key 不能为空。", self)
-                dialog.yesButton.setText("好的")
-                dialog.cancelButton.hide()
-                dialog.exec()
+                self._show_tip("OpenAI 兼容 API Key 为空，请先到设置页配置。")
+                return
+        elif tab_idx == 2:
+            provider = "qwen"
+            base_url = os.getenv("STICKERMAKER_AI_QWEN_BASE_URL", "").strip()
+            model = os.getenv("STICKERMAKER_AI_QWEN_MODEL", "").strip()
+            username = os.getenv("STICKERMAKER_AI_QWEN_USERNAME", "").strip()
+            password = os.getenv("STICKERMAKER_AI_QWEN_PASSWORD", "")
+            if not username or not password:
+                self._show_tip("千问用户名或密码为空，请先到设置页配置。")
+                return
+        elif tab_idx == 3:
+            provider = "banana"
+            base_url = os.getenv("STICKERMAKER_AI_BANANA_BASE_URL", "").strip()
+            api_key = os.getenv("STICKERMAKER_AI_BANANA_API_KEY", "").strip()
+            model = os.getenv("STICKERMAKER_AI_BANANA_MODEL", "").strip()
+            if not api_key:
+                self._show_tip("Banana API Key 为空，请先到设置页配置。")
                 return
 
-        if not base_url or not model:
-            dialog = MessageBox("提示", "Base URL 和 Model 都不能为空。", self)
-            dialog.yesButton.setText("好的")
-            dialog.cancelButton.hide()
-            dialog.exec()
+        if provider != "local_doubao" and (not base_url or not model):
+            self._show_tip("当前服务的 Base URL 或 Model 为空，请先到设置页配置。")
             return
 
         count = int(self.count_spin.value())
@@ -221,9 +232,12 @@ class AIGenerateDialog(QDialog):
 
         self._set_busy(True)
         self._worker = AIGenerateWorker(
+            provider=provider,
             service_base_url=base_url,
             service_api_key=api_key,
             service_model=model,
+            service_username=username,
+            service_password=password,
             prompt=prompt,
             size=size,
             count=count,
@@ -268,13 +282,9 @@ class AIGenerateDialog(QDialog):
         dialog.cancelButton.hide()
         dialog.exec()
 
-
-def _labeled(label: str, widget: QWidget) -> QWidget:
-    row = QWidget()
-    layout = QHBoxLayout(row)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(10)
-    layout.addWidget(QLabel(label))
-    layout.addWidget(widget, 1)
-    return row
+    def _show_tip(self, message: str) -> None:
+        dialog = MessageBox("提示", message, self)
+        dialog.yesButton.setText("好的")
+        dialog.cancelButton.hide()
+        dialog.exec()
 
