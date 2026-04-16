@@ -33,6 +33,13 @@ class ProcessingResult:
     logs: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class OutputNormalizeConfig:
+    width: int = 240
+    height: int = 240
+    keep_aspect_ratio: bool = True
+
+
 GRID_LAYOUTS = {
     "1x1": (1, 1),
     "2x2": (2, 2),
@@ -152,6 +159,7 @@ def process_static_images(
             cols=cols,
             remove_watermark=bool(options.get("remove_watermark")),
             rembg_session=rembg_session,
+            options=options,
             result=result,
             emit=emit,
         )
@@ -185,6 +193,7 @@ def process_dynamic_images(
             cols=cols,
             remove_watermark=bool(options.get("remove_watermark")),
             rembg_session=rembg_session,
+            options=options,
             result=result,
             emit=emit,
         )
@@ -212,6 +221,7 @@ def process_single_source_images(
     cols: int,
     remove_watermark: bool,
     rembg_session: object | None,
+    options: dict[str, object],
     result: ProcessingResult,
     emit: LogCallback,
 ) -> list[Path]:
@@ -235,6 +245,13 @@ def process_single_source_images(
         result.generated_files.append(bg_removed_path)
 
     emit(f"切分宫格：{source_path}")
+    output_cfg = resolve_output_normalize_config(
+        options=options,
+        rows=rows,
+        cols=cols,
+        source_width=image.width(),
+        source_height=image.height(),
+    )
     cells_dir = source_dir / "cells"
     cells_dir.mkdir(parents=True, exist_ok=True)
     generated_cells: list[Path] = []
@@ -242,7 +259,7 @@ def process_single_source_images(
     cells = split_grid(image, rows, cols)
     total_cells = len(cells)
     for cell_index, cell in enumerate(cells, start=1):
-        normalized = normalize_cell(cell)
+        normalized = normalize_cell(cell, output_cfg=output_cfg)
         output_path = cells_dir / f"{counter:04d}.png"
         save_png(normalized, output_path)
         result.generated_files.append(output_path)
@@ -308,6 +325,13 @@ def process_video_sources(
         if frame_index == 1 or frame_index == total_frames or frame_index % 5 == 0:
             emit(f"帧进度：{frame_index}/{total_frames}")
         image = load_image(frame_path)
+        output_cfg = resolve_output_normalize_config(
+            options=options,
+            rows=rows,
+            cols=cols,
+            source_width=image.width(),
+            source_height=image.height(),
+        )
         original_path = original_dir / f"{frame_index:04d}.png"
         save_png(image, original_path)
         result.generated_files.append(original_path)
@@ -329,7 +353,7 @@ def process_video_sources(
             cell_dir = cell_root / f"r{row}_c{col}"
             cell_dir.mkdir(parents=True, exist_ok=True)
 
-            normalized = normalize_cell(cell)
+            normalized = normalize_cell(cell, output_cfg=output_cfg)
             output_path = cell_dir / f"{frame_index:04d}.png"
             save_png(normalized, output_path)
             result.generated_files.append(output_path)
@@ -357,6 +381,36 @@ def parse_positive_int(value: object, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def parse_bool(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "y"}:
+        return True
+    if text in {"0", "false", "no", "off", "n"}:
+        return False
+    return default
+
+
+def resolve_output_normalize_config(
+    options: dict[str, object],
+    rows: int,
+    cols: int,
+    source_width: int,
+    source_height: int,
+) -> OutputNormalizeConfig:
+    # 仅 1x1 允许自定义输出宽高，其余布局保持历史行为（240x240）。
+    if rows != 1 or cols != 1:
+        return OutputNormalizeConfig(width=240, height=240, keep_aspect_ratio=True)
+
+    width = parse_positive_int(options.get("output_width"), default=max(source_width, 1))
+    height = parse_positive_int(options.get("output_height"), default=max(source_height, 1))
+    keep_aspect = parse_bool(options.get("keep_aspect_ratio"), default=True)
+    return OutputNormalizeConfig(width=width, height=height, keep_aspect_ratio=keep_aspect)
 
 
 def _resolve_rembg_model_name(options: dict[str, object]) -> str:
@@ -461,7 +515,12 @@ def split_grid(image: QImage, rows: int, cols: int) -> list[QImage]:
     return cells
 
 
-def normalize_cell(cell: QImage, padding: int = 5, size: int = 240) -> QImage:
+def normalize_cell(
+    cell: QImage,
+    padding: int = 5,
+    output_cfg: OutputNormalizeConfig | None = None,
+) -> QImage:
+    cfg = output_cfg or OutputNormalizeConfig()
     bounds = find_content_bounds(cell)
     if bounds is None:
         cropped = cell
@@ -473,19 +532,27 @@ def normalize_cell(cell: QImage, padding: int = 5, size: int = 240) -> QImage:
         bottom = min(cell.height() - 1, bottom + padding)
         cropped = cell.copy(QRect(left, top, right - left + 1, bottom - top + 1))
 
-    square_size = max(cropped.width(), cropped.height(), 1)
-    canvas = QImage(square_size, square_size, QImage.Format_RGBA8888)
-    canvas.fill(Qt.transparent)
+    if cfg.keep_aspect_ratio:
+        # 保持原图/原视频长宽比：直接按原内容比例缩放并居中，不再强制正方形。
+        fit_mode = Qt.KeepAspectRatio
+        source = cropped
+    else:
+        # 不保持比例时直接拉伸裁切结果到目标宽高。
+        source = cropped
+        fit_mode = Qt.IgnoreAspectRatio
 
-    painter = QPainter(canvas)
+    target = QImage(cfg.width, cfg.height, QImage.Format_RGBA8888)
+    target.fill(Qt.transparent)
+    scaled = source.scaled(cfg.width, cfg.height, fit_mode, Qt.SmoothTransformation)
+
+    painter = QPainter(target)
     painter.drawImage(
-        (square_size - cropped.width()) // 2,
-        (square_size - cropped.height()) // 2,
-        cropped,
+        (cfg.width - scaled.width()) // 2,
+        (cfg.height - scaled.height()) // 2,
+        scaled,
     )
     painter.end()
-
-    return canvas.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return target
 
 
 def find_content_bounds(image: QImage) -> tuple[int, int, int, int] | None:

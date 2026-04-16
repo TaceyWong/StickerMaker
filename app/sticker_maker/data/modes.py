@@ -69,6 +69,32 @@ COMMON_CAPABILITIES = (
     "裁边与正方形填充",
 )
 
+ONE_BY_ONE_OUTPUT_OPTIONS = (
+    OptionSpec(
+        key="output_width",
+        label="输出宽度（仅1x1生效）",
+        description="1x1 布局下导出宽度；留空默认使用原图/原视频宽度。",
+        kind="text",
+        default="",
+        placeholder="留空=原始宽度",
+    ),
+    OptionSpec(
+        key="output_height",
+        label="输出高度（仅1x1生效）",
+        description="1x1 布局下导出高度；留空默认使用原图/原视频高度。",
+        kind="text",
+        default="",
+        placeholder="留空=原始高度",
+    ),
+    OptionSpec(
+        key="keep_aspect_ratio",
+        label="保持长宽比（仅1x1生效）",
+        description="开=维持原图/原视频比例；关=拉伸到目标宽高。",
+        kind="boolean",
+        default=True,
+    ),
+)
+
 COMMON_IMAGE_OPTIONS = (
     OptionSpec(
         key="grid_layout",
@@ -92,7 +118,7 @@ COMMON_IMAGE_OPTIONS = (
         kind="boolean",
         default=True,
     ),
-)
+) + ONE_BY_ONE_OUTPUT_OPTIONS
 
 STATIC_MODE = ModeConfig(
     key="static",
@@ -224,6 +250,7 @@ VIDEO_MODE = ModeConfig(
             kind="boolean",
             default=True,
         ),
+        *ONE_BY_ONE_OUTPUT_OPTIONS,
         OptionSpec(
             key="gif_interval",
             label="GIF 帧间隔（毫秒）",

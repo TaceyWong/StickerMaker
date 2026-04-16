@@ -23,6 +23,7 @@ class OptionPanel(QFrame):
         self.option_specs = option_specs
         self.controls: dict[str, QWidget] = {}
         self.grid_groups: dict[str, list[QCheckBox]] = {}
+        self.labels: dict[str, QLabel] = {}
         self.setObjectName("sectionCard")
 
         layout = QVBoxLayout(self)
@@ -43,9 +44,11 @@ class OptionPanel(QFrame):
             label.setToolTip(spec.description)
             editor = self._create_editor(spec)
             editor.setToolTip(spec.description)
+            self.labels[spec.key] = label
             self.controls[spec.key] = editor
             form_layout.addRow(label, editor)
 
+        self._apply_conditional_visibility()
         layout.addStretch(1)
 
     def _create_editor(self, spec: OptionSpec) -> QWidget:
@@ -116,7 +119,29 @@ class OptionPanel(QFrame):
                 cb.blockSignals(True)
                 cb.setChecked(False)
                 cb.blockSignals(False)
+        self._apply_conditional_visibility()
         self._emit_options_changed()
 
     def _emit_options_changed(self) -> None:
+        self._apply_conditional_visibility()
         self.optionsChanged.emit(self.values())
+
+    def _selected_grid_layout(self) -> str:
+        grid_spec = next((spec for spec in self.option_specs if spec.kind == "grid_checkbox"), None)
+        if grid_spec is None:
+            return ""
+        for cb in self.grid_groups.get(grid_spec.key, []):
+            if cb.isChecked():
+                return str(cb.property("value"))
+        return str(grid_spec.default)
+
+    def _apply_conditional_visibility(self) -> None:
+        selected_grid = self._selected_grid_layout()
+        show_one_by_one_options = selected_grid == "1x1"
+        for key in ("output_width", "output_height", "keep_aspect_ratio"):
+            label = self.labels.get(key)
+            editor = self.controls.get(key)
+            if label is not None:
+                label.setVisible(show_one_by_one_options)
+            if editor is not None:
+                editor.setVisible(show_one_by_one_options)
