@@ -3,7 +3,9 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QMouseEvent
-from PySide6.QtWidgets import QFileDialog, QFrame, QLabel, QListWidget, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
 
 
 class FileDropArea(QFrame):
@@ -53,7 +55,29 @@ class FileDropArea(QFrame):
         self.file_list.setMinimumHeight(150)
         self.file_list.setAcceptDrops(False)
         self.file_list.viewport().setAcceptDrops(False)
+        self.file_list.itemDoubleClicked.connect(self._preview_selected_item)
         layout.addWidget(self.file_list)
+
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+
+        self.preview_button = QPushButton("预览", self)
+        self.preview_button.clicked.connect(self.preview_selected)
+        action_row.addWidget(self.preview_button)
+
+        self.up_button = QPushButton("上移", self)
+        self.up_button.clicked.connect(self.move_selected_up)
+        action_row.addWidget(self.up_button)
+
+        self.down_button = QPushButton("下移", self)
+        self.down_button.clicked.connect(self.move_selected_down)
+        action_row.addWidget(self.down_button)
+
+        self.remove_button = QPushButton("删除选中", self)
+        self.remove_button.clicked.connect(self.remove_selected)
+        action_row.addWidget(self.remove_button)
+        action_row.addStretch(1)
+        layout.addLayout(action_row)
 
         self._refresh_list()
 
@@ -68,8 +92,16 @@ class FileDropArea(QFrame):
         self.file_list.clear()
         if self.paths:
             self.file_list.addItems(self.paths)
+            self._sync_action_buttons(True)
             return
         self.file_list.addItem("暂无文件")
+        self._sync_action_buttons(False)
+
+    def _sync_action_buttons(self, enabled: bool) -> None:
+        self.preview_button.setEnabled(enabled)
+        self.up_button.setEnabled(enabled)
+        self.down_button.setEnabled(enabled)
+        self.remove_button.setEnabled(enabled)
 
     def _append_files(self, file_paths: list[str]) -> None:
         new_files = [path for path in file_paths if self._is_supported(path)]
@@ -109,6 +141,48 @@ class FileDropArea(QFrame):
         self.paths.clear()
         self._refresh_list()
         self.filesChanged.emit([])
+
+    def _selected_index(self) -> int:
+        if not self.paths:
+            return -1
+        return self.file_list.currentRow()
+
+    def _preview_selected_item(self, _item: QListWidgetItem | None = None) -> None:
+        self.preview_selected()
+
+    def preview_selected(self) -> None:
+        idx = self._selected_index()
+        if idx < 0 or idx >= len(self.paths):
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self.paths[idx]))
+
+    def remove_selected(self) -> None:
+        idx = self._selected_index()
+        if idx < 0 or idx >= len(self.paths):
+            return
+        self.paths.pop(idx)
+        self._refresh_list()
+        if self.paths:
+            self.file_list.setCurrentRow(min(idx, len(self.paths) - 1))
+        self.filesChanged.emit(self.paths.copy())
+
+    def move_selected_up(self) -> None:
+        idx = self._selected_index()
+        if idx <= 0 or idx >= len(self.paths):
+            return
+        self.paths[idx - 1], self.paths[idx] = self.paths[idx], self.paths[idx - 1]
+        self._refresh_list()
+        self.file_list.setCurrentRow(idx - 1)
+        self.filesChanged.emit(self.paths.copy())
+
+    def move_selected_down(self) -> None:
+        idx = self._selected_index()
+        if idx < 0 or idx >= len(self.paths) - 1:
+            return
+        self.paths[idx + 1], self.paths[idx] = self.paths[idx], self.paths[idx + 1]
+        self._refresh_list()
+        self.file_list.setCurrentRow(idx + 1)
+        self.filesChanged.emit(self.paths.copy())
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
         if self._extract_supported_local_paths(event):
