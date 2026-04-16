@@ -11,6 +11,7 @@ from sticker_maker.services.processing import ProcessingResult
 from sticker_maker.widgets.common import ScrollPage, SectionCard
 from sticker_maker.widgets.drop_zone import FileDropArea
 from sticker_maker.widgets.option_panel import OptionPanel
+from sticker_maker.widgets.output_preview_dialog import OutputPreviewDialog
 from sticker_maker.workers.processing_worker import ProcessingWorker
 
 
@@ -59,6 +60,11 @@ class ModeWorkspaceView(ScrollPage):
         self.open_output_button.setEnabled(False)
         self.open_output_button.clicked.connect(self._open_output_dir)
         button_row.addWidget(self.open_output_button)
+
+        self.preview_output_button = QPushButton("预览", run_card)
+        self.preview_output_button.setEnabled(False)
+        self.preview_output_button.clicked.connect(self._open_preview_dialog)
+        button_row.addWidget(self.preview_output_button)
         button_row.addStretch(1)
         run_card.body_layout.addLayout(button_row)
 
@@ -115,6 +121,7 @@ class ModeWorkspaceView(ScrollPage):
         self.log_text.clear()
         self.last_result = None
         self.open_output_button.setEnabled(False)
+        self.preview_output_button.setEnabled(False)
         self.process_button.setEnabled(False)
         self.status_label.setText("处理中，请稍候…")
 
@@ -140,6 +147,7 @@ class ModeWorkspaceView(ScrollPage):
     def _handle_success(self, result: ProcessingResult) -> None:
         self.last_result = result
         self.open_output_button.setEnabled(True)
+        self.preview_output_button.setEnabled(bool(self._collect_preview_files(result)))
         warning_text = f"（{len(result.warnings)} 条提示）" if result.warnings else ""
         self.status_label.setText(
             f"完成。已生成 {len(result.generated_files)} 个文件{warning_text}。"
@@ -157,3 +165,21 @@ class ModeWorkspaceView(ScrollPage):
         if self.last_result is None:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.last_result.output_dir)))
+
+    @staticmethod
+    def _collect_preview_files(result: ProcessingResult) -> list[Path]:
+        exts = {".png", ".gif"}
+        return [path for path in result.generated_files if path.suffix.lower() in exts and path.exists()]
+
+    def _open_preview_dialog(self) -> None:
+        if self.last_result is None:
+            return
+        files = self._collect_preview_files(self.last_result)
+        if not files:
+            dialog = MessageBox("无可预览文件", "当前任务没有生成 PNG 或 GIF。", self)
+            dialog.yesButton.setText("知道了")
+            dialog.cancelButton.hide()
+            dialog.exec()
+            return
+        preview = OutputPreviewDialog(files, self)
+        preview.exec()
