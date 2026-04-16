@@ -46,10 +46,18 @@ class StickerMakerWindow(FluentWindow):
             QWidget#pageContainer {
                 background: #f4f6fa;
             }
-            QFrame#sectionCard, QFrame#dropCard, QFrame#heroCard {
+            QFrame#sectionCard, QFrame#dropCard, QFrame#heroCard, QFrame#previewFrame {
                 background: #ffffff;
                 border: 1px solid #e1e6ef;
                 border-radius: 14px;
+            }
+            QLabel#previewLabel {
+                color: #506176;
+                background: #f8f9fc;
+                border: 1px dashed #c3ccdb;
+                border-radius: 12px;
+                padding: 8px;
+                font-size: 12px;
             }
             QLabel#tagChip {
                 color: #3d5a80;

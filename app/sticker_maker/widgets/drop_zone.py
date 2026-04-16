@@ -1,8 +1,8 @@
 # coding: utf-8
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QMouseEvent
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
@@ -32,31 +32,40 @@ class FileDropArea(QFrame):
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
 
-        self.hint = QLabel(hint_text, self)
-        self.hint.setObjectName("sectionDescription")
-        self.hint.setWordWrap(True)
-        self.hint.setAcceptDrops(False)
-        layout.addWidget(self.hint)
-
-        self.clear_button = QPushButton("清空", self)
-        self.clear_button.clicked.connect(self.clear_files)
-        layout.addWidget(self.clear_button, 0, Qt.AlignRight)
-
-        self.tip_label = QLabel(self._build_drop_tip(), self)
-        self.tip_label.setObjectName("dropTip")
-        self.tip_label.setAlignment(Qt.AlignCenter)
-        self.tip_label.setMinimumHeight(88)
-        self.tip_label.setCursor(Qt.PointingHandCursor)
-        self.tip_label.setAcceptDrops(False)
-        layout.addWidget(self.tip_label)
-
         self.file_list = QListWidget(self)
         self.file_list.setObjectName("fileList")
         self.file_list.setMinimumHeight(150)
         self.file_list.setAcceptDrops(False)
         self.file_list.viewport().setAcceptDrops(False)
         self.file_list.itemDoubleClicked.connect(self._preview_selected_item)
-        layout.addWidget(self.file_list)
+        self.file_list.currentRowChanged.connect(self._update_preview_from_selection)
+
+        preview_frame = QFrame(self)
+        preview_frame.setObjectName("previewFrame")
+        preview_frame.setFixedWidth(240)
+
+        preview_layout = QVBoxLayout(preview_frame)
+        preview_layout.setContentsMargins(12, 12, 12, 12)
+        preview_layout.setSpacing(10)
+
+        preview_title = QLabel("预览", preview_frame)
+        preview_title.setObjectName("previewTitle")
+        preview_title.setAlignment(Qt.AlignCenter)
+        preview_layout.addWidget(preview_title)
+
+        self.preview_label = QLabel("无预览", preview_frame)
+        self.preview_label.setObjectName("previewLabel")
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setMinimumHeight(160)
+        self.preview_label.setCursor(Qt.PointingHandCursor)
+        self.preview_label.installEventFilter(self)
+        preview_layout.addWidget(self.preview_label)
+
+        list_and_preview = QHBoxLayout()
+        list_and_preview.setSpacing(12)
+        list_and_preview.addWidget(self.file_list, 1)
+        list_and_preview.addWidget(preview_frame, 0)
+        layout.addLayout(list_and_preview)
 
         action_row = QHBoxLayout()
         action_row.setSpacing(8)
@@ -76,14 +85,23 @@ class FileDropArea(QFrame):
         self.remove_button = QPushButton("删除选中", self)
         self.remove_button.clicked.connect(self.remove_selected)
         action_row.addWidget(self.remove_button)
+
+        self.clear_button = QPushButton("清空", self)
+        self.clear_button.clicked.connect(self.clear_files)
+        action_row.addWidget(self.clear_button)
+
+        self.add_button = QPushButton("添加", self)
+        self.add_button.clicked.connect(self.choose_files)
+        action_row.addWidget(self.add_button)
         action_row.addStretch(1)
         layout.addLayout(action_row)
 
         self._refresh_list()
 
     def _build_drop_tip(self) -> str:
+        # 保留方法接口，当前未使用（历史虚线提示位）。
         suffix_text = "、".join(sorted(self.accepted_suffixes))
-        return f"拖入文件到此处，或点击此区域选择\n支持类型：{suffix_text}"
+        return f"支持类型：{suffix_text}"
 
     def _is_supported(self, file_path: str) -> bool:
         return Path(file_path).suffix.lower() in self.accepted_suffixes
@@ -120,11 +138,8 @@ class FileDropArea(QFrame):
 
     def _set_drag_state(self, active: bool) -> None:
         self.setProperty("dragOver", active)
-        self.tip_label.setProperty("dragOver", active)
         self.style().unpolish(self)
         self.style().polish(self)
-        self.tip_label.style().unpolish(self.tip_label)
-        self.tip_label.style().polish(self.tip_label)
 
     def choose_files(self) -> None:
         patterns = " ".join(f"*{suffix}" for suffix in sorted(self.accepted_suffixes))
@@ -155,6 +170,41 @@ class FileDropArea(QFrame):
         if idx < 0 or idx >= len(self.paths):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(self.paths[idx]))
+
+    def _update_preview_from_selection(self, _row: int) -> None:
+        idx = self._selected_index()
+        if idx < 0 or idx >= len(self.paths):
+            self.preview_label.setText("无预览")
+            self.preview_label.setPixmap(QPixmap())
+            return
+
+        path = self.paths[idx]
+        suffix = Path(path).suffix.lower()
+        img_suffixes = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+        if suffix not in img_suffixes:
+            self.preview_label.setText(f"不支持预览\n{suffix or '文件'}")
+            self.preview_label.setPixmap(QPixmap())
+            return
+
+        pix = QPixmap(path)
+        if pix.isNull():
+            self.preview_label.setText("加载失败")
+            self.preview_label.setPixmap(QPixmap())
+            return
+
+        target = self.preview_label.size()
+        if target.width() <= 0 or target.height() <= 0:
+            target = self.preview_label.minimumSize()
+
+        scaled = pix.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.preview_label.setText("")
+        self.preview_label.setPixmap(scaled)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: ANN001
+        if watched is self.preview_label and event.type() == QEvent.MouseButtonPress:
+            self.preview_selected()
+            return True
+        return super().eventFilter(watched, event)
 
     def remove_selected(self) -> None:
         idx = self._selected_index()
@@ -212,8 +262,4 @@ class FileDropArea(QFrame):
         event.ignore()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if event.button() == Qt.LeftButton and self.tip_label.geometry().contains(event.pos()):
-            self.choose_files()
-            event.accept()
-            return
         super().mousePressEvent(event)
