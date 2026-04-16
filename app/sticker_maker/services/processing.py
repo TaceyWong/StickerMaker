@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Callable
 
@@ -222,6 +223,7 @@ def process_single_source_images(
     if rembg_session is not None:
         emit(f"去除背景：{source_path}")
         image = _remove_background_with_rembg(image, rembg_session)
+        image = _cleanup_edge_black_fringe(image)
         bg_removed_path = source_dir / "background_removed.png"
         save_png(image, bg_removed_path)
         result.generated_files.append(bg_removed_path)
@@ -302,6 +304,7 @@ def process_video_sources(
             result.generated_files.append(watermark_path)
         if rembg_session is not None:
             image = _remove_background_with_rembg(image, rembg_session)
+            image = _cleanup_edge_black_fringe(image)
             bg_removed_path = bg_removed_dir / f"{frame_index:04d}.png"
             save_png(image, bg_removed_path)
             result.generated_files.append(bg_removed_path)
@@ -376,6 +379,44 @@ def _remove_background_with_rembg(image: QImage, session: object) -> QImage:
     result = QImage.fromData(output_bytes)
     if result.isNull():
         raise ProcessingError("去背景失败：无法将 rembg 输出解码为图像。")
+    return result.convertToFormat(QImage.Format_RGBA8888)
+
+
+def _cleanup_edge_black_fringe(image: QImage) -> QImage:
+    """清理去背景后半透明边缘的黑色污染。"""
+    try:
+        import numpy as np
+    except ImportError as error:
+        raise ProcessingError("边缘去黑需要 numpy，请先安装。") from error
+
+    png_bytes = _qimage_to_png_bytes(image)
+    try:
+        rgba = Image.open(BytesIO(png_bytes)).convert("RGBA")
+    except OSError as error:
+        raise ProcessingError(f"边缘去黑失败：{error}") from error
+
+    arr = np.array(rgba, dtype=np.uint8)
+    alpha = arr[:, :, 3].astype(np.uint16)
+
+    # 完全透明像素清零 RGB，避免量化时把脏色带出来。
+    fully_transparent = alpha <= 2
+    arr[fully_transparent, 0:3] = 0
+
+    # 半透明边缘按 alpha 拉亮，减轻黑边。
+    edge_band = (alpha > 2) & (alpha < 112)
+    if edge_band.any():
+        a = alpha[edge_band].astype(np.float32)
+        # 反预乘近似，限制放大倍率，避免噪声爆亮。
+        boost = np.clip(255.0 / np.maximum(a, 1.0), 1.0, 2.8).reshape(-1, 1)
+        rgb = arr[edge_band, 0:3].astype(np.float32) * boost
+        arr[edge_band, 0:3] = np.clip(rgb, 0, 255).astype(np.uint8)
+
+    cleaned = Image.fromarray(arr, mode="RGBA")
+    output = BytesIO()
+    cleaned.save(output, format="PNG")
+    result = QImage.fromData(output.getvalue())
+    if result.isNull():
+        raise ProcessingError("边缘去黑失败：无法解码输出图像。")
     return result.convertToFormat(QImage.Format_RGBA8888)
 
 
@@ -516,35 +557,47 @@ def build_gif_from_sequence(
     gif_out.parent.mkdir(parents=True, exist_ok=True)
     emit(f"合成 GIF：{gif_out.name}（{len(frames)} 帧，{interval_ms} ms/帧）")
 
-    pil_frames: list[Image.Image] = []
-    try:
-        for path in frames:
-            frame = Image.open(path).convert("RGBA")
-            # 统一每帧为 240x240，避免 GIF 尺寸漂移
-            if frame.size != (240, 240):
-                frame.thumbnail((240, 240), Image.Resampling.LANCZOS)
-                canvas = Image.new("RGBA", (240, 240), (0, 0, 0, 0))
-                offset = ((240 - frame.width) // 2, (240 - frame.height) // 2)
-                canvas.paste(frame, offset, frame)
-                frame = canvas
-            pil_frames.append(frame)
+    magick_path = _resolve_magick_executable()
+    delay_cs = max(1, round(interval_ms / 10))  # ImageMagick delay unit = 1/100s
+    command = [
+        str(magick_path),
+        "-delay",
+        str(delay_cs),
+        "-dispose","background",
+        *[str(path.resolve()) for path in frames],
+        "-alpha",
+        "set",
+        "-dispose",
+        "previous",
+        "-loop",
+        "0",
+        "-layers",
+        "OptimizeTransparency",
+        str(gif_out),
+    ]
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip() or "未知 ImageMagick 错误"
+        raise ProcessingError(f"ImageMagick 合成 GIF 失败：{message}")
 
-        first, rest = pil_frames[0], pil_frames[1:]
-        first.save(
-            gif_out,
-            format="GIF",
-            save_all=True,
-            append_images=rest,
-            duration=interval_ms,
-            loop=0,
-            disposal=2,
-            optimize=False,
-        )
-    except OSError as error:
-        raise ProcessingError(f"GIF 合成失败：{error}") from error
-    finally:
-        for frame in pil_frames:
-            frame.close()
+
+def _resolve_magick_executable() -> Path:
+    repo_root = Path(__file__).resolve().parents[3]
+    local_magick = repo_root / "gif" / "magick.exe"
+    if local_magick.is_file():
+        return local_magick
+
+    path_magick = shutil.which("magick")
+    if path_magick:
+        return Path(path_magick)
+
+    raise ProcessingError("未找到 ImageMagick，可执行文件应位于 gif/magick.exe 或 PATH 中的 magick。")
 
 
 def extract_video_frames(
