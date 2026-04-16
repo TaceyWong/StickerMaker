@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from io import BytesIO
@@ -59,6 +60,8 @@ REMBG_MODEL_IDS = frozenset(
     }
 )
 REMBG_DEFAULT_MODEL = "bria-rmbg"
+_REMBG_SESSION_CACHE: dict[str, object] = {}
+_REMBG_SESSION_LOCK = threading.Lock()
 
 
 def configure_rembg_models_dir(base_dir: Path) -> Path:
@@ -471,17 +474,30 @@ def _resolve_rembg_model_name(options: dict[str, object]) -> str:
     return REMBG_DEFAULT_MODEL
 
 
+def preload_rembg_session(base_dir: Path, options: dict[str, object] | None = None) -> object:
+    """后台预热 rembg 会话，首次会下载/加载模型。"""
+    configure_rembg_models_dir(base_dir)
+    model_name = _resolve_rembg_model_name(options or {})
+    with _REMBG_SESSION_LOCK:
+        cached = _REMBG_SESSION_CACHE.get(model_name)
+        if cached is not None:
+            return cached
+        try:
+            from rembg import new_session
+        except ImportError as error:
+            raise ProcessingError(
+                '未安装 rembg，请在当前 Python 环境中执行：pip install "rembg[cpu]"'
+            ) from error
+        session = new_session(model_name)
+        _REMBG_SESSION_CACHE[model_name] = session
+        return session
+
+
 def _create_rembg_session_if_enabled(options: dict[str, object]) -> object | None:
     if not options.get("remove_background"):
         return None
-    try:
-        from rembg import new_session
-    except ImportError as error:
-        raise ProcessingError(
-            '未安装 rembg，请在当前 Python 环境中执行：pip install "rembg[cpu]"'
-        ) from error
-    model_name = _resolve_rembg_model_name(options)
-    return new_session(model_name)
+    base_dir = Path(__file__).resolve().parents[2]
+    return preload_rembg_session(base_dir, options)
 
 
 def _qimage_to_png_bytes(image: QImage) -> bytes:
@@ -693,9 +709,9 @@ def build_gif_from_sequence(
 
     gif_out = gif_path.resolve()
     gif_out.parent.mkdir(parents=True, exist_ok=True)
-    emit(f"GIF 合成前：对 {len(frames)} 张 PNG 做无损压缩（减小体积）…")
-    _lossless_optimize_png_in_place(frames, emit=emit)
-    emit(f"合成 GIF：{gif_out.name}（{len(frames)} 帧，{interval_ms} ms/帧）")
+    # emit(f"GIF 合成前：对 {len(frames)} 张 PNG 做无损压缩（减小体积）…")
+    # _lossless_optimize_png_in_place(frames, emit=emit)
+    # emit(f"合成 GIF：{gif_out.name}（{len(frames)} 帧，{interval_ms} ms/帧）")
 
     magick_path = _resolve_magick_executable()
     delay_cs = max(1, round(interval_ms / 10))  # ImageMagick delay unit = 1/100s
@@ -705,16 +721,17 @@ def build_gif_from_sequence(
         str(delay_cs),
         "-dispose","background",
         *[str(path.resolve()) for path in frames],
-        "-alpha",
-        "set",
-        "-dispose",
-        "previous",
+        # "-coalesce",
+        # "-alpha",
+        # "set",
+        # "-dispose",
+        # "previous",
         "-loop",
         "0",
-        "-layers",
-        "OptimizeTransparency",
-        "-layers",
-        "Optimize",
+        # "-layers",
+        # "OptimizeTransparency",
+        # "-layers",
+        # "Optimize",
         str(gif_out),
     ]
     completed = subprocess.run(
