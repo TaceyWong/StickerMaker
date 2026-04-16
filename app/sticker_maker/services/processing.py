@@ -255,9 +255,13 @@ def process_video_sources(
     frame_strategy = str(options.get("frame_strategy", "keyframe"))
     interval = parse_positive_int(options.get("gif_interval"), default=100)
 
-    extracted_dir = job_dir / "extracted_frames"
-    extracted_dir.mkdir(parents=True, exist_ok=True)
     source_path = Path(source_paths[0])
+    sources_root = job_dir / "sources"
+    sources_root.mkdir(parents=True, exist_ok=True)
+    source_dir = _build_source_dir(sources_root, 1, source_path)
+
+    extracted_dir = source_dir / "extracted_frames"
+    extracted_dir.mkdir(parents=True, exist_ok=True)
 
     emit(f"抽帧视频：{source_path}")
     extract_video_frames(source_path, extracted_dir, frame_strategy, interval)
@@ -267,12 +271,20 @@ def process_video_sources(
         raise ProcessingError("没有从视频中提取到可用帧，请检查输入视频或抽帧策略。")
 
     emit(f"已提取 {len(frame_paths)} 帧，开始按宫格切分。")
-    cell_root = job_dir / "cells"
-    gif_root = job_dir / "gifs"
+    original_dir = source_dir / "original_frames"
+    original_dir.mkdir(parents=True, exist_ok=True)
+    watermark_dir = source_dir / "watermark_removed_frames"
+    if options.get("remove_watermark"):
+        watermark_dir.mkdir(parents=True, exist_ok=True)
+    bg_removed_dir = source_dir / "background_removed_frames"
+
+    cell_root = source_dir / "cells"
+    gif_root = source_dir / "gifs"
     gif_root.mkdir(parents=True, exist_ok=True)
 
     rembg_session = _create_rembg_session_if_enabled(options)
     if rembg_session is not None:
+        bg_removed_dir.mkdir(parents=True, exist_ok=True)
         emit(
             f"去背景模型：{_resolve_rembg_model_name(options)}"
             "（逐帧处理，CPU 模式下可能较慢）。"
@@ -280,8 +292,19 @@ def process_video_sources(
 
     for frame_index, frame_path in enumerate(frame_paths, start=1):
         image = load_image(frame_path)
+        original_path = original_dir / f"{frame_index:04d}.png"
+        save_png(image, original_path)
+        result.generated_files.append(original_path)
+
+        if options.get("remove_watermark"):
+            watermark_path = watermark_dir / f"{frame_index:04d}.png"
+            save_png(image, watermark_path)
+            result.generated_files.append(watermark_path)
         if rembg_session is not None:
             image = _remove_background_with_rembg(image, rembg_session)
+            bg_removed_path = bg_removed_dir / f"{frame_index:04d}.png"
+            save_png(image, bg_removed_path)
+            result.generated_files.append(bg_removed_path)
         cells = split_grid(image, rows, cols)
         for cell_index, cell in enumerate(cells):
             row = cell_index // cols + 1
