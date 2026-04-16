@@ -38,6 +38,7 @@ class OutputNormalizeConfig:
     width: int = 240
     height: int = 240
     keep_aspect_ratio: bool = True
+    trim_to_content: bool = True
 
 
 GRID_LAYOUTS = {
@@ -182,6 +183,8 @@ def process_dynamic_images(
     sources_root = job_dir / "sources"
     sources_root.mkdir(parents=True, exist_ok=True)
     total_sources = len(source_paths)
+    merged_frames: list[Path] = []
+
     for source_index, source_path in enumerate(source_paths, start=1):
         emit(f"[{source_index}/{total_sources}] 开始处理动态素材")
         source = Path(source_path)
@@ -199,10 +202,24 @@ def process_dynamic_images(
         )
         if not generated_cells:
             continue
-        gif_path = source_dir / "output.gif"
-        build_gif_from_sequence(source_dir / "cells", gif_path, interval, emit)
-        result.generated_files.append(gif_path)
-        emit(f"[{source_index}/{total_sources}] 完成动态素材：{source.name} -> {gif_path.name}")
+
+        merged_frames.extend(generated_cells)
+        emit(f"[{source_index}/{total_sources}] 完成：{source.name}（已加入总帧序列）")
+
+    if not merged_frames:
+        return
+
+    merged_dir = job_dir / "merged_frames"
+    if merged_dir.exists():
+        shutil.rmtree(merged_dir)
+    merged_dir.mkdir(parents=True, exist_ok=True)
+    for index, frame in enumerate(merged_frames, start=1):
+        shutil.copy2(frame, merged_dir / f"{index:04d}.png")
+
+    gif_path = job_dir / "output.gif"
+    emit(f"合成 GIF：{gif_path.name}（共 {len(merged_frames)} 帧）")
+    build_gif_from_sequence(merged_dir, gif_path, interval, emit)
+    result.generated_files.append(gif_path)
 
 
 def _build_source_dir(sources_root: Path, source_index: int, source: Path) -> Path:
@@ -383,6 +400,17 @@ def parse_positive_int(value: object, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def parse_optional_positive_int(value: object) -> int | None:
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return None
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def parse_bool(value: object, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -405,12 +433,35 @@ def resolve_output_normalize_config(
 ) -> OutputNormalizeConfig:
     # 仅 1x1 允许自定义输出宽高，其余布局保持历史行为（240x240）。
     if rows != 1 or cols != 1:
-        return OutputNormalizeConfig(width=240, height=240, keep_aspect_ratio=True)
+        return OutputNormalizeConfig(width=240, height=240, keep_aspect_ratio=True, trim_to_content=True)
 
-    width = parse_positive_int(options.get("output_width"), default=max(source_width, 1))
-    height = parse_positive_int(options.get("output_height"), default=max(source_height, 1))
+    src_w = max(source_width, 1)
+    src_h = max(source_height, 1)
     keep_aspect = parse_bool(options.get("keep_aspect_ratio"), default=True)
-    return OutputNormalizeConfig(width=width, height=height, keep_aspect_ratio=keep_aspect)
+
+    raw_w = parse_optional_positive_int(options.get("output_width"))
+    raw_h = parse_optional_positive_int(options.get("output_height"))
+
+    if raw_w is None and raw_h is None:
+        width = src_w
+        height = src_h
+    elif keep_aspect and raw_w is not None and raw_h is None:
+        width = raw_w
+        height = max(1, round(raw_w * src_h / src_w))
+    elif keep_aspect and raw_h is not None and raw_w is None:
+        height = raw_h
+        width = max(1, round(raw_h * src_w / src_h))
+    else:
+        width = raw_w if raw_w is not None else src_w
+        height = raw_h if raw_h is not None else src_h
+
+    # 1x1 走“原图/原视频比例与构图”，不再裁透明边界，避免出现上下/左右异常大留白。
+    return OutputNormalizeConfig(
+        width=width,
+        height=height,
+        keep_aspect_ratio=keep_aspect,
+        trim_to_content=False,
+    )
 
 
 def _resolve_rembg_model_name(options: dict[str, object]) -> str:
@@ -521,24 +572,27 @@ def normalize_cell(
     output_cfg: OutputNormalizeConfig | None = None,
 ) -> QImage:
     cfg = output_cfg or OutputNormalizeConfig()
-    bounds = find_content_bounds(cell)
-    if bounds is None:
-        cropped = cell
+    if not cfg.trim_to_content:
+        source_base = cell
     else:
-        left, top, right, bottom = bounds
-        left = max(0, left - padding)
-        top = max(0, top - padding)
-        right = min(cell.width() - 1, right + padding)
-        bottom = min(cell.height() - 1, bottom + padding)
-        cropped = cell.copy(QRect(left, top, right - left + 1, bottom - top + 1))
+        bounds = find_content_bounds(cell)
+        if bounds is None:
+            source_base = cell
+        else:
+            left, top, right, bottom = bounds
+            left = max(0, left - padding)
+            top = max(0, top - padding)
+            right = min(cell.width() - 1, right + padding)
+            bottom = min(cell.height() - 1, bottom + padding)
+            source_base = cell.copy(QRect(left, top, right - left + 1, bottom - top + 1))
 
     if cfg.keep_aspect_ratio:
         # 保持原图/原视频长宽比：直接按原内容比例缩放并居中，不再强制正方形。
         fit_mode = Qt.KeepAspectRatio
-        source = cropped
+        source = source_base
     else:
         # 不保持比例时直接拉伸裁切结果到目标宽高。
-        source = cropped
+        source = source_base
         fit_mode = Qt.IgnoreAspectRatio
 
     target = QImage(cfg.width, cfg.height, QImage.Format_RGBA8888)
@@ -639,6 +693,8 @@ def build_gif_from_sequence(
 
     gif_out = gif_path.resolve()
     gif_out.parent.mkdir(parents=True, exist_ok=True)
+    emit(f"GIF 合成前：对 {len(frames)} 张 PNG 做无损压缩（减小体积）…")
+    _lossless_optimize_png_in_place(frames, emit=emit)
     emit(f"合成 GIF：{gif_out.name}（{len(frames)} 帧，{interval_ms} ms/帧）")
 
     magick_path = _resolve_magick_executable()
@@ -657,6 +713,8 @@ def build_gif_from_sequence(
         "0",
         "-layers",
         "OptimizeTransparency",
+        "-layers",
+        "Optimize",
         str(gif_out),
     ]
     completed = subprocess.run(
@@ -669,6 +727,31 @@ def build_gif_from_sequence(
     if completed.returncode != 0:
         message = completed.stderr.strip() or completed.stdout.strip() or "未知 ImageMagick 错误"
         raise ProcessingError(f"ImageMagick 合成 GIF 失败：{message}")
+
+
+def _lossless_optimize_png_in_place(frames: list[Path], *, emit: LogCallback | None = None) -> None:
+    """
+    对 PNG 进行无损重存以降低体积（不改变像素尺寸/布局）。
+    """
+    # pillow 的 optimize/compress_level 属于无损压缩范畴（通常不会改变视觉结果）。
+    for idx, path in enumerate(frames, start=1):
+        if emit is not None and (idx == 1 or idx == len(frames) or idx % 10 == 0):
+            emit(f"PNG 压缩进度：{idx}/{len(frames)}")
+        try:
+            with Image.open(path) as im:
+                # 保证 alpha 通道存在（Qt 输出一般是 RGBA）
+                if im.mode not in {"RGBA", "LA"}:
+                    im = im.convert("RGBA")
+                im.save(
+                    str(path),
+                    format="PNG",
+                    optimize=True,
+                    compress_level=9,
+                )
+        except Exception as e:  # noqa: BLE001
+            # 压缩失败不应阻断 GIF 合成
+            if emit is not None:
+                emit(f"警告：PNG 无损压缩失败（跳过）：{path.name}，原因：{e}")
 
 
 def _resolve_magick_executable() -> Path:
